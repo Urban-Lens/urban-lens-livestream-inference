@@ -69,6 +69,7 @@ def process_stream(youtube_url, cookies_file, api_url, split_n, confidence, para
     # Configure cookies if available
     if cookies:
         session.set_option("http-cookies", cookies)
+        print("Adding cookies", cookies)
     
     # Start time
     start_time = time.time()
