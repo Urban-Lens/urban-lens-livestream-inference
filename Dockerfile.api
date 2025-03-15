@@ -1,0 +1,39 @@
+# Dockerfile for FastAPI service
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install system dependencies (OpenCV dependencies and build tools)
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN groupadd -r apiuser && useradd -r -g apiuser apiuser
+
+# Install Python dependencies in stages
+COPY requirements.txt .
+# Install dependencies as root for better permissions
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY app.py .
+
+# Set proper ownership of files
+RUN chown -R apiuser:apiuser /app
+
+# Expose the port
+EXPOSE 8000
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Switch to non-root user
+USER apiuser
+
+# Command to run the application
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

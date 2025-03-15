@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # FastAPI service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      - YOLO_MODEL_PATH=yolo11n.onnx
+    volumes:
+      - ./yolo11n.onnx:/app/yolo11n.onnx
+    depends_on:
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # Redis for Celery message broker and result backend
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+
+  # Celery worker (will create 16 instances)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    depends_on:
+      - redis
+    volumes:
+      - ./yolo11n_ncnn_model:/app/yolo11n_ncnn_model
+    environment:
+      - YOLO_MODEL_PATH=yolo11n_ncnn_model
+    restart: on-failure
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        reservations:
+            devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+        limits:
+          cpus: '2'
+          memory: 1G
+
+  # Flower for monitoring Celery (optional)
+  flower:
+    image: mher/flower
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - FLOWER_PORT=5555
+    depends_on:
+      - redis
+      - worker
+    restart: unless-stopped
+
+volumes:
+  redis-data:

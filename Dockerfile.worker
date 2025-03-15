@@ -1,0 +1,51 @@
+# Dockerfile for Celery worker
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# Install system dependencies (OpenCV dependencies and build tools)
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user to run the worker
+RUN groupadd -r celeryuser && useradd -r -g celeryuser celeryuser
+
+# Install Python dependencies in stages
+COPY requirements.txt .
+# Install dependencies as root for better permissions
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code and worker script
+COPY app.py worker.py ./
+
+# Copy the YOLO model (if available) or it will be downloaded at runtime
+COPY yolov11n.onnx* ./
+
+# Set proper ownership of files
+RUN chown -R celeryuser:celeryuser /app
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 
+ENV PYTHONDONTWRITEBYTECODE=1
+# ENV YOLO_MODEL_PATH=yolov11n.onnx
+# Copy NCNN model directory
+COPY yolo11n_ncnn_model/ /app/yolo11n_ncnn_model/
+COPY yolo11n.pt* ./
+
+# Set permissions for the model directory
+RUN chmod -R 755 /app/yolo11n_ncnn_model/ && \
+    chown -R celeryuser:celeryuser /app/yolo11n_ncnn_model/
+
+# Set environment variable to point to the model
+ENV YOLO_MODEL_PATH=/app/yolo11n_ncnn_model/
+ENV YOLO_MODEL_FORMAT=ncnn
+
+# Switch to non-root user
+USER celeryuser
+
+# Command to run the worker
+CMD ["python", "worker.py"]
