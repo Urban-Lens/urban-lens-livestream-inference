@@ -17,3 +17,4 @@ onnx
 onnxslim
 onnxruntime
 ncnn
+psycopg2-binary
