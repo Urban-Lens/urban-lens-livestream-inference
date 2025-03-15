@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 import numpy as np
 import cv2
@@ -12,6 +12,9 @@ from celery import Celery
 from celery.result import AsyncResult, ResultSet
 import io
 import time
+import psycopg2
+from psycopg2.extras import Json
+import asyncio
 
 # Initialize FastAPI app
 app = FastAPI(title="Object Detection API", 
