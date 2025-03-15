@@ -169,6 +169,169 @@ def log_time(label, start):
     elapsed = time.time() - start
     print(f"{label} took {elapsed:.4f} seconds")
 
+# Database connection
+def get_db_connection():
+    """Get a connection to the PostgreSQL database"""
+    try:
+        conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+        return conn
+    except Exception as e:
+        print(f"Error connecting to database: {str(e)}")
+        return None
+
+def save_to_database(results, source_id):
+    """Save detection results to the database"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            print("Failed to connect to database")
+            return False
+        
+        cursor = conn.cursor()
+        
+        # Count people and vehicles
+        class_counts = results.get("class_counts", {})
+        people_ct = class_counts.get("person", 0)
+        vehicle_ct = class_counts.get("car", 0) + class_counts.get("truck", 0)
+        
+        # Insert into the timeseries_analytics table
+        query = """
+            INSERT INTO timeseries_analytics
+            (timestamp, source_id, people_ct, vehicle_ct, detections)
+            VALUES (NOW(), %s, %s, %s, %s)
+            RETURNING id;
+        """
+        
+        cursor.execute(query, (
+            source_id, 
+            people_ct, 
+            vehicle_ct, 
+            Json(results)
+        ))
+        
+        record_id = cursor.fetchone()[0]
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"Saved detection results to database with ID: {record_id}")
+        return True
+        
+    except Exception as e:
+        print(f"Error saving to database: {str(e)}")
+        if conn:
+            conn.rollback()
+            conn.close()
+        return False
+
+async def process_and_save_detections(
+    image_data: bytes,
+    source_id: str,
+    split_n: int,
+    confidence: float,
+    timeout: int,
+    celery_app: Celery
+):
+    """Process image with detection and save results to database"""
+    try:
+        overall_start = time.time()
+        
+        # Decode image
+        image = cv2.imdecode(np.frombuffer(image_data, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            print("Invalid image data")
+            return
+        
+        height, width = image.shape[:2]
+        
+        # Split image if needed
+        if split_n > 1:
+            pieces = split_image(image, split_n)
+        else:
+            pieces = [(image, (0, 0), (width, height))]
+        
+        # Send to Celery workers
+        tasks = []
+        for piece, offset, _ in pieces:
+            task = celery_app.send_task(
+                'process_image_piece',
+                args=[piece, offset, confidence]
+            )
+            tasks.append(task)
+        
+        # Wait for results
+        task_results = []
+        for task in tasks:
+            try:
+                result = task.get(timeout=timeout)
+                task_results.append(result)
+            except Exception as e:
+                print(f"Task error or timeout: {str(e)}")
+        
+        # Merge detections
+        merged_result = merge_detections(task_results, (height, width))
+        
+        processing_time = time.time() - overall_start
+        
+        # Prepare final results
+        results = {
+            "timestamp": overall_start,
+            "processing_time": processing_time,
+            "total_objects": merged_result["total_objects"],
+            "class_counts": merged_result["class_counts"],
+            "image_dimensions": {"width": width, "height": height},
+            "split_info": {"n": split_n, "pieces": split_n ** 2},
+            "detections": merged_result["boxes"]
+        }
+        
+        # Save to database
+        save_to_database(results, source_id)
+        
+        print(f"Processing complete for source_id {source_id} in {processing_time:.2f} seconds")
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Background processing error: {str(e)}")
+
+# Add this to your app:
+
+@app.post("/save_detections/")
+async def save_detections(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    source_id: str = Form(...),
+    split_n: Optional[int] = Form(1),
+    confidence: Optional[float] = Form(0.35),
+    timeout: Optional[int] = Form(30)
+):
+    """
+    Process image detection in the background and save results to database
+    """
+    try:
+        # Read the file
+        contents = await file.read()
+        
+        # Start background task
+        background_tasks.add_task(
+            process_and_save_detections,
+            contents,
+            source_id,
+            split_n,
+            confidence,
+            timeout,
+            celery_app
+        )
+        
+        return {
+            "status": "processing",
+            "message": f"Image scheduled for processing with source_id: {source_id}",
+            "source_id": source_id
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error scheduling processing: {str(e)}")
+
 @app.post("/detect/", response_model=DetectionResult)
 async def detect_objects(
     file: UploadFile = File(...),
