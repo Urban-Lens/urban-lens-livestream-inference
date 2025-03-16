@@ -147,7 +147,7 @@ def save_to_s3(image, detections, source_id, class_counts=None):
         s3_url = f"https://{s3_bucket}.s3.amazonaws.com/{s3_key}"
         
         print(f"Saved detection image to S3: {s3_url}")
-        return s3_url
+        return s3_url, image_with_boxes
         
     except Exception as e:
         print(f"Error saving image to S3: {str(e)}")

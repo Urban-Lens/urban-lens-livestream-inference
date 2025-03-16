@@ -242,7 +242,7 @@ async def process_and_save_detections(
     timeout: int,
     celery_app: Celery
 ):
-    """Process image with detection and save results to database"""
+    """Process image with detection and save results to database and stream"""
     try:
         overall_start = time.time()
         
@@ -294,9 +294,10 @@ async def process_and_save_detections(
             "detections": merged_result["boxes"]
         }
         
+        
         # Draw bounding boxes and save image to S3
-        s3_url = save_to_s3(
-            image, 
+        s3_url, processed_image = save_to_s3(
+            processed_image, 
             merged_result["boxes"], 
             source_id, 
             merged_result["class_counts"]
@@ -308,6 +309,34 @@ async def process_and_save_detections(
 
         # Save to database
         save_to_database(results, source_id)
+        
+        # Publish frame for streaming if Redis client is available
+        try:
+            # Import here to avoid circular imports
+            from frame_publisher import publish_frame
+            import redis
+            
+            # Connect to Redis (could be moved to a global connection)
+            redis_host = os.getenv('REDIS_HOST', 'localhost')
+            redis_port = int(os.getenv('REDIS_PORT', '6379'))
+            redis_channel = os.getenv('REDIS_CHANNEL', 'frame_updates')
+            
+            redis_client = redis.Redis(host=redis_host, port=redis_port)
+            
+            # Publish frame for streaming - use the same timestamp as results
+            publish_result = publish_frame(
+                redis_client,
+                source_id, 
+                processed_image,  # Use the processed image with bounding boxes
+                overall_start     # Use the same timestamp as in results
+            )
+            
+            if publish_result:
+                print(f"Published frame for streaming: {source_id}")
+            
+        except Exception as e:
+            print(f"Error publishing frame to Redis: {str(e)}")
+            # Continue execution - streaming is secondary to core functionality
         
         print(f"Processing complete for source_id {source_id} in {processing_time:.2f} seconds")
         
