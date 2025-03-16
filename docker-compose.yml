@@ -47,11 +47,6 @@ services:
       mode: replicated
       replicas: 1
       resources:
-        reservations:
-            devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
         limits:
           cpus: '2'
           memory: 1G
