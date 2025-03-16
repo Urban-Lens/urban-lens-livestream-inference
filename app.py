@@ -15,6 +15,9 @@ import time
 import psycopg2
 from psycopg2.extras import Json
 import asyncio
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI(title="Object Detection API", 
