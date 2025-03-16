@@ -86,7 +86,8 @@ def start_http_server():
     handler = CORSHTTPRequestHandler
     httpd = socketserver.ThreadingTCPServer(("", HTTP_PORT), handler)
     
-    local_ip = get_local_ip()
+    # local_ip = get_local_ip()
+    local_ip = "0.0.0.0"
     logger.info(f"HTTP Server running at http://{local_ip}:{HTTP_PORT}/")
     logger.info(f"Stream URLs will be: http://{local_ip}:{HTTP_PORT}/[source_id]/index.m3u8")
     
