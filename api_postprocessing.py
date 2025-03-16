@@ -120,7 +120,7 @@ def save_to_s3(image, detections, source_id, class_counts=None):
         
         # Convert back to OpenCV format
         image_with_boxes = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
-        
+
         # Create timestamp for filename
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{source_id}_detection_{timestamp_str}.png"
