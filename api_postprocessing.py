@@ -108,22 +108,18 @@ def save_to_s3(image, detections, source_id, class_counts=None):
                    (255, 255, 255), 
                    1)
         
-        # Resize image to max 1280x720 while maintaining aspect ratio
-        h, w = image_with_boxes.shape[:2]
-        if w > 1280 or h > 720:
-            # Convert OpenCV image to PIL
-            image_pil = Image.fromarray(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB))
-            
-            # Calculate new dimensions while maintaining aspect ratio
-            ratio = min(1280 / w, 720 / h)
-            new_width = int(w * ratio)
-            new_height = int(h * ratio)
-            
-            # Resize the image
-            image_pil = image_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            
-            # Convert back to OpenCV format
-            image_with_boxes = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
+        # Resize image to max 1280x720 using thumbnail function
+        # Convert OpenCV image to PIL
+        image_pil = Image.fromarray(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB))
+        
+        # Set maximum size
+        max_size = (1280, 720)
+        
+        # Use thumbnail method to resize (always maintains aspect ratio)
+        image_pil.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        # Convert back to OpenCV format
+        image_with_boxes = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
         
         # Create timestamp for filename
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
