@@ -303,29 +303,6 @@ def main():
     """Main function"""
     global executor
     
-    parser = argparse.ArgumentParser(description="Monitor streams for all locations")
-    parser.add_argument("--api", help="API URL", default=API_URL)
-    parser.add_argument("--split", type=int, help="Split number", default=SPLIT_N)
-    parser.add_argument("--confidence", type=float, help="Confidence threshold", default=CONFIDENCE)
-    parser.add_argument("--parallel", type=lambda x: x.lower() == 'true', 
-                        help="Use parallel processing", default=PARALLEL)
-    parser.add_argument("--check-interval", type=int, help="Location check interval in seconds", 
-                        default=LOCATION_CHECK_INTERVAL)
-    parser.add_argument("--frame-interval", type=float, help="Seconds between frames", 
-                        default=FRAME_INTERVAL)
-    parser.add_argument("--max-workers", type=int, help="Maximum worker threads", default=20)
-    
-    args = parser.parse_args()
-    
-    # Update globals with command-line args
-    global API_URL, SPLIT_N, CONFIDENCE, PARALLEL, LOCATION_CHECK_INTERVAL, FRAME_INTERVAL
-    API_URL = args.api
-    SPLIT_N = args.split
-    CONFIDENCE = args.confidence
-    PARALLEL = args.parallel
-    LOCATION_CHECK_INTERVAL = args.check_interval
-    FRAME_INTERVAL = args.frame_interval
-    
     # Register signal handlers
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
