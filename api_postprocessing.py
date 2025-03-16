@@ -113,7 +113,7 @@ def save_to_s3(image, detections, source_id, class_counts=None):
         image_pil = Image.fromarray(cv2.cvtColor(image_with_boxes, cv2.COLOR_BGR2RGB))
         
         # Set maximum size
-        max_size = (1280, 720)
+        max_size = (800, 800)
         
         # Use thumbnail method to resize (always maintains aspect ratio)
         image_pil.thumbnail(max_size, Image.Resampling.LANCZOS)
