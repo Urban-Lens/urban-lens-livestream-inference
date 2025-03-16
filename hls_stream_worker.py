@@ -87,7 +87,7 @@ def start_http_server():
     
     # Create and start the server
     handler = CORSHTTPRequestHandler
-    httpd = socketserver.ThreadingTCPServer(("", HTTP_PORT), handler)
+    httpd = socketserver.ThreadingTCPServer(("0.0.0.0", HTTP_PORT), handler)
     
     # local_ip = get_local_ip()
     local_ip = "0.0.0.0"

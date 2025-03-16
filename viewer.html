@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+        }
+        .stream-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .stream-box {
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            width: 640px;
+        }
+        .stream-title {
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        video {
+            width: 100%;
+            height: auto;
+            background-color: #000;
+        }
+        .controls {
+            margin-top: 20px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Stream Viewer</h1>
+    
+    <div class="controls">
+        <input type="text" id="stream-id" placeholder="Enter stream ID (e.g., times_square_1)">
+        <button onclick="addStream()">Add Stream</button>
+        <button onclick="refreshAll()">Refresh All</button>
+    </div>
+    
+    <div class="stream-container" id="streams">
+        <!-- Streams will be added here -->
+    </div>
+
+    <script>
+        // Get server address from current URL
+        const serverBase = window.location.protocol + '//' + window.location.hostname + ':8080/';
+        const streams = {};
+        
+        // Load previously added streams from localStorage
+        function loadSavedStreams() {
+            const savedStreams = localStorage.getItem('streamIds');
+            if (savedStreams) {
+                const streamIds = JSON.parse(savedStreams);
+                streamIds.forEach(id => {
+                    addStreamPlayer(id);
+                });
+            }
+        }
+        
+        // Save current streams to localStorage
+        function saveStreams() {
+            const streamIds = Object.keys(streams);
+            localStorage.setItem('streamIds', JSON.stringify(streamIds));
+        }
+        
+        // Add a new stream from the input field
+        function addStream() {
+            const input = document.getElementById('stream-id');
+            const streamId = input.value.trim();
+            
+            if (streamId && !streams[streamId]) {
+                addStreamPlayer(streamId);
+                input.value = '';
+                saveStreams();
+            }
+        }
+        
+        // Create a stream player for the given ID
+        function addStreamPlayer(streamId) {
+            // const streamUrl = `${serverBase}${streamId}/playlist.m3u8`;
+            const streamUrl = `http://localhost:8080/${streamId}/playlist.m3u8`;
+            
+            // Create container
+            const streamBox = document.createElement('div');
+            streamBox.className = 'stream-box';
+            streamBox.id = `box-${streamId}`;
+            
+            // Create title
+            const title = document.createElement('h2');
+            title.className = 'stream-title';
+            title.textContent = streamId;
+            
+            // Create video element
+            const video = document.createElement('video');
+            video.id = `video-${streamId}`;
+            video.controls = true;
+            video.autoplay = true;
+            video.muted = true;
+            
+            // Create refresh button
+            const refreshBtn = document.createElement('button');
+            refreshBtn.textContent = 'Refresh';
+            refreshBtn.onclick = () => refreshStream(streamId);
+            
+            // Create remove button
+            const removeBtn = document.createElement('button');
+            removeBtn.textContent = 'Remove';
+            removeBtn.style.backgroundColor = '#f44336';
+            removeBtn.onclick = () => removeStream(streamId);
+            
+            // Add all elements to the container
+            streamBox.appendChild(title);
+            streamBox.appendChild(video);
+            streamBox.appendChild(document.createElement('br'));
+            streamBox.appendChild(refreshBtn);
+            streamBox.appendChild(removeBtn);
+            
+            // Add to page
+            document.getElementById('streams').appendChild(streamBox);
+            
+            // Initialize HLS
+            initializePlayer(streamId, streamUrl);
+            
+            // Store reference
+            streams[streamId] = { 
+                box: streamBox, 
+                video: video, 
+                url: streamUrl 
+            };
+        }
+        
+        // Initialize HLS player for a stream
+        function initializePlayer(streamId, streamUrl) {
+            const video = document.getElementById(`video-${streamId}`);
+            
+            if (Hls.isSupported()) {
+                const hls = new Hls({
+                    debug: false,
+                    enableWorker: true,
+                    lowLatencyMode: true,
+                    manifestLoadingTimeOut: 10000,
+                    manifestLoadingMaxRetry: 3
+                });
+                
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+                
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    if (data.fatal) {
+                        console.error(`Error loading stream ${streamId}:`, data);
+                        setTimeout(() => {
+                            hls.destroy();
+                            initializePlayer(streamId, streamUrl);
+                        }, 2000);
+                    }
+                });
+                
+                streams[streamId].hls = hls;
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // For Safari
+                video.src = streamUrl;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+            }
+        }
+        
+        // Refresh a specific stream
+        function refreshStream(streamId) {
+            if (streams[streamId]) {
+                const { hls, video, url } = streams[streamId];
+                
+                if (hls) {
+                    hls.destroy();
+                }
+                
+                initializePlayer(streamId, url);
+            }
+        }
+        
+        // Remove a stream
+        function removeStream(streamId) {
+            if (streams[streamId]) {
+                const { box, hls } = streams[streamId];
+                
+                if (hls) {
+                    hls.destroy();
+                }
+                
+                box.remove();
+                delete streams[streamId];
+                saveStreams();
+            }
+        }
+        
+        // Refresh all streams
+        function refreshAll() {
+            Object.keys(streams).forEach(streamId => {
+                refreshStream(streamId);
+            });
+        }
+        
+        // Load saved streams on page load
+        window.onload = loadSavedStreams;
+    </script>
+</body>
+</html>
