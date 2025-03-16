@@ -294,9 +294,11 @@ async def process_and_save_detections(
             "detections": merged_result["boxes"]
         }
         
+        # Get a copy of the image for processing
+        processed_image = image.copy()
         
         # Draw bounding boxes and save image to S3
-        s3_url, processed_image = save_to_s3(
+        s3_url, output_image = save_to_s3(
             processed_image, 
             merged_result["boxes"], 
             source_id, 
@@ -327,7 +329,7 @@ async def process_and_save_detections(
             publish_result = publish_frame(
                 redis_client,
                 source_id, 
-                processed_image,  # Use the processed image with bounding boxes
+                output_image,  # Use the processed image with bounding boxes
                 overall_start     # Use the same timestamp as in results
             )
             
