@@ -216,7 +216,7 @@ def save_to_database(results, source_id):
             people_ct, 
             vehicle_ct, 
             Json(results),
-
+            output_img_path
         ))
         
         record_id = cursor.fetchone()[0]
