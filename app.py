@@ -175,6 +175,7 @@ def log_time(label, start):
 # Database connection
 def get_db_connection():
     """Get a connection to the PostgreSQL database"""
+    print(f"Using DATABASE_URL: {os.getenv('DATABASE_URL')}")
     try:
         conn = psycopg2.connect(os.getenv('DATABASE_URL'))
         return conn

@@ -1,0 +1,15 @@
+# API and web framework
+fastapi
+uvicorn
+python-multipart
+
+# Celery and Redis
+celery
+redis
+flower
+
+# Computer vision and ML
+opencv-python
+numpy
+psycopg2-binary
+python-dotenv
