@@ -26,6 +26,9 @@ from pathlib import Path
 import argparse
 import base64
 import socket
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
