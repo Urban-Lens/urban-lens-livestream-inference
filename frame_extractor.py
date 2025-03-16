@@ -4,8 +4,9 @@ Location Streams Monitor
 
 This script:
 1. Reads location data from the database
-2. For each location with an input_stream_url, starts a separate process to monitor the stream
+2. For each location with an input_stream_url, starts a thread to monitor the stream
 3. Uses the location ID as the source ID for frame capturing
+4. Periodically checks for new locations and updates accordingly
 
 Prerequisites:
 - PostgreSQL database connection
@@ -26,7 +27,16 @@ import streamlink
 import cv2
 from datetime import datetime
 import requests
+import threading
+import concurrent.futures
+import uuid
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('frame_extractor')
 
 # Load environment variables
 load_dotenv()
@@ -36,13 +46,16 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 # Other settings (can be overridden with command-line args)
 API_URL = os.getenv('API_URL', 'http://localhost:8000')
-FRAME_CAPTURE_SCRIPT = os.getenv('FRAME_CAPTURE_SCRIPT', 'stream_detector.py')
 SPLIT_N = int(os.getenv('SPLIT_N', '4'))
 CONFIDENCE = float(os.getenv('CONFIDENCE', '0.15'))
 PARALLEL = os.getenv('PARALLEL', 'true').lower() in ('true', 'yes', '1')
+LOCATION_CHECK_INTERVAL = int(os.getenv('LOCATION_CHECK_INTERVAL', '300'))  # Seconds (5 minutes by default)
+FRAME_INTERVAL = float(os.getenv('FRAME_INTERVAL', '5.0'))  # Seconds between frames
 
-# Process tracking
-process_map = {}
+# Active threads and futures tracking
+active_locations = {}  # Track currently monitored locations
+executor = None  # Will be initialized as a ThreadPoolExecutor
+location_lock = threading.Lock()  # Lock for thread-safe updates to active_locations
 
 def get_db_connection():
     """Connect to PostgreSQL database"""
@@ -50,10 +63,11 @@ def get_db_connection():
         conn = psycopg2.connect(DATABASE_URL)
         return conn
     except Exception as e:
-        print(f"Error connecting to database: {str(e)}")
+        logger.error(f"Error connecting to database: {str(e)}")
         return None
 
 def get_active_locations():
+    """Fetch locations with active streams from the database"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -61,72 +75,20 @@ def get_active_locations():
     try:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         query = """
-            SELECT id, input_stream_url
+            SELECT id, input_stream_url, address
             FROM location
             WHERE input_stream_url IS NOT NULL AND input_stream_url != ''
         """
         cursor.execute(query)
-        locations = cursor.fetchall()
+        locations = [dict(row) for row in cursor.fetchall()]
         cursor.close()
         conn.close()
         return locations
     except Exception as e:
-        print(f"Error fetching locations: {e}")
+        logger.error(f"Error fetching locations: {e}")
+        if conn:
+            conn.close()
         return []
-
-def start_stream_process(location, api_url, split_n, confidence, parallel):
-    """Start a stream monitoring process for a location"""
-    location_id = str(location['id'])
-    stream_url = location['input_stream_url']
-    
-    # Prepare command
-    cmd = [
-        'python', FRAME_CAPTURE_SCRIPT,
-        stream_url,
-        '--api', api_url,
-        '--split', str(split_n),
-        '--confidence', str(confidence),
-        '--parallel', str(parallel).lower(),
-        '--source-id', location_id
-    ]
-    
-    # Start process
-    try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            bufsize=1,
-            preexec_fn=os.setsid  # Used to terminate the whole process group later
-        )
-        
-        print(f"Started monitoring for location {location_id} ({location['address']})")
-        print(f"Stream URL: {stream_url}")
-        print(f"Process PID: {process.pid}")
-        print("-" * 50)
-        
-        return process
-    except Exception as e:
-        print(f"Error starting process for location {location_id}: {str(e)}")
-        return None
-
-def stop_all_processes():
-    """Stop all running stream processes"""
-    for location_id, process in process_map.items():
-        try:
-            if process and process.poll() is None:  # If process is still running
-                # Send the signal to the process group
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                print(f"Stopped monitoring for location {location_id}")
-        except Exception as e:
-            print(f"Error stopping process for location {location_id}: {str(e)}")
-
-def handle_exit(sig, frame):
-    """Handle exit signals gracefully"""
-    print("\nShutting down...")
-    stop_all_processes()
-    sys.exit(0)
 
 def send_frame_to_api(frame, api_url, source_id, split_n, confidence, parallel):
     """Send frame to the save_detections API endpoint"""
@@ -148,19 +110,19 @@ def send_frame_to_api(frame, api_url, source_id, split_n, confidence, parallel):
         response = requests.post(api_url, files=files, data=data)
         
         if response.status_code != 200:
-            print(f"Error: API returned status code {response.status_code}")
-            print(f"Response: {response.text}")
+            logger.error(f"Error: API returned status code {response.status_code}")
+            logger.debug(f"Response: {response.text}")
             return None
             
         return response.json()
     except Exception as e:
-        print(f"Error sending request: {e}")
+        logger.error(f"Error sending request: {e}")
         return None
 
-def process_stream(youtube_url, cookies_file, api_url, split_n, confidence, parallel, source_id):
+def process_stream(youtube_url, api_url, split_n, confidence, parallel, source_id, address=None):
     """Process a stream continuously, capturing frames at regular intervals"""
     # Set up thread-specific logger
-    thread_logger = logging.getLogger(f"stream_{source_id}")
+    thread_logger = logging.getLogger(f"stream_{source_id}_{address}")
     thread_logger.setLevel(logging.INFO)
     
     # Add console handler if not already added
@@ -186,11 +148,10 @@ def process_stream(youtube_url, cookies_file, api_url, split_n, confidence, para
     
     frame_count = 0
     connection_errors = 0
-    frame_interval = 5  # Seconds between frames
     max_errors = 10  # Maximum consecutive errors before backing off
     
     try:
-        while True:
+        while source_id in active_locations:  # Check if this location is still active
             try:
                 # Get stream info (with backoff on repeated errors)
                 if connection_errors > max_errors:
@@ -245,54 +206,154 @@ def process_stream(youtube_url, cookies_file, api_url, split_n, confidence, para
                 else:
                     thread_logger.warning("Failed to send frame to API")
                 
-                # Wait until next frame time
-                time.sleep(frame_interval)
+                # Wait until next frame time - check more frequently if this location is removed
+                for _ in range(int(FRAME_INTERVAL * 2)):  # Check twice per interval
+                    if source_id not in active_locations:
+                        break
+                    time.sleep(0.5)
                     
-            except KeyboardInterrupt:
-                raise
             except Exception as e:
                 thread_logger.error(f"Error processing frame: {str(e)}")
                 connection_errors += 1
                 time.sleep(5)  # Wait before retry
                 
-    except KeyboardInterrupt:
-        thread_logger.info(f"Stream processing interrupted after {frame_count} frames")
     except Exception as e:
         thread_logger.error(f"Fatal error in stream processing: {str(e)}")
     
     thread_logger.info(f"Stream processing for {source_id} ending after {frame_count} frames")
     return frame_count
 
-# Integration into your existing script
-if __name__ == "__main__":
-    # Get locations from database
-    locations = get_active_locations()
+def location_monitor():
+    """
+    Background thread that periodically checks for new or removed locations
+    without impacting frame capture timing
+    """
+    logger.info(f"Starting location monitor thread (check interval: {LOCATION_CHECK_INTERVAL}s)")
     
-    # Process each location in parallel
-    import concurrent.futures
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = []
-        for location in locations:
-            source_id = location['id']
-            stream_url = location['input_stream_url']
+    while True:
+        try:
+            # Fetch current active locations from the database
+            db_locations = get_active_locations()
+            db_location_ids = {str(loc['id']) for loc in db_locations}
             
-            futures.append(
-                executor.submit(
-                    process_stream,
-                    stream_url,
-                    None,  # cookies_file
-                    API_URL,
-                    SPLIT_N,
-                    CONFIDENCE,
-                    PARALLEL,
-                    source_id
-                )
-            )
+            with location_lock:
+                # Find new locations to add
+                current_location_ids = set(active_locations.keys())
+                new_location_ids = db_location_ids - current_location_ids
+                removed_location_ids = current_location_ids - db_location_ids
+                
+                # Start monitoring new locations
+                for loc in db_locations:
+                    loc_id = str(loc['id'])
+                    if loc_id in new_location_ids:
+                        address = loc['address']
+                        logger.info(f"Adding new location: {loc_id} - {address}")
+                        stream_url = loc['input_stream_url']
+                        
+                        # Submit task to process this stream
+                        future = executor.submit(
+                            process_stream,
+                            stream_url,
+                            API_URL,
+                            SPLIT_N,
+                            CONFIDENCE,
+                            PARALLEL,
+                            loc_id,
+                            address
+                        )
+                        
+                        # Store the future and stream URL
+                        active_locations[loc_id] = {
+                            'future': future,
+                            'url': stream_url,
+                            'address': address
+                        }
+                
+                # Remove locations that no longer exist
+                for loc_id in removed_location_ids:
+                    logger.info(f"Removing location: {loc_id}")
+                    # The thread will exit on its own after checking active_locations
+                    del active_locations[loc_id]
+            
+            # Log status
+            logger.info(f"Currently monitoring {len(active_locations)} locations")
+            
+        except Exception as e:
+            logger.error(f"Error in location monitor: {str(e)}")
+            
+        # Sleep until next check
+        time.sleep(LOCATION_CHECK_INTERVAL)
+
+def handle_exit(sig, frame):
+    """Handle exit signals gracefully"""
+    logger.info("Shutting down...")
+    
+    # Stop all stream processing
+    with location_lock:
+        active_locations.clear()  # This will signal threads to stop
+    
+    # Shutdown executor
+    if executor:
+        executor.shutdown(wait=False)
+    
+    logger.info("All streams stopped")
+    sys.exit(0)
+
+def main():
+    """Main function"""
+    global executor
+    
+    parser = argparse.ArgumentParser(description="Monitor streams for all locations")
+    parser.add_argument("--api", help="API URL", default=API_URL)
+    parser.add_argument("--split", type=int, help="Split number", default=SPLIT_N)
+    parser.add_argument("--confidence", type=float, help="Confidence threshold", default=CONFIDENCE)
+    parser.add_argument("--parallel", type=lambda x: x.lower() == 'true', 
+                        help="Use parallel processing", default=PARALLEL)
+    parser.add_argument("--check-interval", type=int, help="Location check interval in seconds", 
+                        default=LOCATION_CHECK_INTERVAL)
+    parser.add_argument("--frame-interval", type=float, help="Seconds between frames", 
+                        default=FRAME_INTERVAL)
+    parser.add_argument("--max-workers", type=int, help="Maximum worker threads", default=20)
+    
+    args = parser.parse_args()
+    
+    # Update globals with command-line args
+    global API_URL, SPLIT_N, CONFIDENCE, PARALLEL, LOCATION_CHECK_INTERVAL, FRAME_INTERVAL
+    API_URL = args.api
+    SPLIT_N = args.split
+    CONFIDENCE = args.confidence
+    PARALLEL = args.parallel
+    LOCATION_CHECK_INTERVAL = args.check_interval
+    FRAME_INTERVAL = args.frame_interval
+    
+    # Register signal handlers
+    signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGTERM, handle_exit)
+    
+    logger.info("Starting frame extractor...")
+    logger.info(f"API URL: {API_URL}")
+    logger.info(f"Database URL: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else 'configured'}")
+    logger.info(f"Checking for new locations every {LOCATION_CHECK_INTERVAL} seconds")
+    logger.info(f"Frame interval: {FRAME_INTERVAL} seconds")
+    logger.info("=" * 50)
+    
+    # Create thread pool
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers)
+    
+    try:
+        # Start location monitor in background thread
+        monitor_thread = threading.Thread(target=location_monitor, daemon=True)
+        monitor_thread.start()
         
-        # Wait for all to complete
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()
-            except Exception as e:
-                print(f"Error processing stream: {e}")
+        # Wait indefinitely (the monitor thread will handle everything)
+        monitor_thread.join()
+        
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        handle_exit(None, None)
+    except Exception as e:
+        logger.error(f"Error in main thread: {str(e)}")
+        handle_exit(None, None)
+
+if __name__ == "__main__":
+    main()
