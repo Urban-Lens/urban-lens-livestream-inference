@@ -201,12 +201,13 @@ def save_to_database(results, source_id):
         class_counts = results.get("class_counts", {})
         people_ct = class_counts.get("person", 0)
         vehicle_ct = class_counts.get("car", 0) + class_counts.get("truck", 0)
+        output_img_path = results.get("output_img_path", "NULL")
         
         # Insert into the timeseries_analytics table
         query = """
             INSERT INTO timeseries_analytics
-            (timestamp, source_id, people_ct, vehicle_ct, detections)
-            VALUES (NOW(), %s, %s, %s, %s)
+            (timestamp, source_id, people_ct, vehicle_ct, detections, output_img_path)
+            VALUES (NOW(), %s, %s, %s, %s, %s)
             RETURNING id;
         """
         
@@ -214,7 +215,8 @@ def save_to_database(results, source_id):
             source_id, 
             people_ct, 
             vehicle_ct, 
-            Json(results)
+            Json(results),
+
         ))
         
         record_id = cursor.fetchone()[0]

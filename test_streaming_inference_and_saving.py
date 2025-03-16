@@ -75,7 +75,7 @@ def process_stream(youtube_url, cookies_file, api_url, split_n, confidence, para
     
     # Start time
     start_time = time.time()
-    end_time = start_time + 60  # Run for 1 minute
+    end_time = start_time + 600  # Run for 1 minute
     
     # Ensure API URL doesn't have save_detections appended already
     if api_url.endswith('/save_detections/'):
