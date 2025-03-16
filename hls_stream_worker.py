@@ -82,6 +82,8 @@ def get_local_ip():
 
 def start_http_server():
     """Start the HTTP server to serve HLS content"""
+    socketserver.TCPServer.allow_reuse_address = True
+
     # Change directory to HLS root
     os.chdir(HLS_DIR)
     
@@ -298,7 +300,7 @@ def process_frame_message(message):
         
         # Add to buffer
         add_frame_to_buffer(source_id, frame, timestamp)
-        logger.debug(f"Added frame for {source_id}, timestamp: {timestamp}")
+        logger.info(f"Added frame for {source_id}, timestamp: {timestamp}")
         
     except json.JSONDecodeError:
         logger.error(f"Invalid JSON message: {message[:100]}...")
