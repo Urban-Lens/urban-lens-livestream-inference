@@ -16,6 +16,7 @@ import psycopg2
 from psycopg2.extras import Json
 import asyncio
 from dotenv import load_dotenv
+from api_postprocessing import save_to_s3
 
 load_dotenv()
 
@@ -291,6 +292,18 @@ async def process_and_save_detections(
             "detections": merged_result["boxes"]
         }
         
+        # Draw bounding boxes and save image to S3
+        s3_url = save_to_s3(
+            image, 
+            merged_result["boxes"], 
+            source_id, 
+            merged_result["class_counts"]
+        )
+
+        # Add S3 URL to results if available
+        if s3_url:
+            results["output_img_path"] = s3_url
+
         # Save to database
         save_to_database(results, source_id)
         
