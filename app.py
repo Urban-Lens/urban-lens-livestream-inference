@@ -27,8 +27,8 @@ app = FastAPI(title="Object Detection API",
 # Celery configuration
 celery_app = Celery(
     "object_detection",
-    broker="redis://redis:6379/0",
-    backend="redis://redis:6379/0"
+    broker="redis://{REDIS_HOST}:6379/0",
+    backend="redis://{REDIS_HOST}:6379/0"
 )
 
 celery_app.conf.update(
