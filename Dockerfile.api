@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -r api_requirements.txt
 COPY app.py .
 
 COPY .env /app/.env
+COPY api_postprocessing.py /app/api_postprocessing.py
 
 # Set proper ownership of files
 RUN chown -R apiuser:apiuser /app
